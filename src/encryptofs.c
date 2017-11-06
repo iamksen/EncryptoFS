@@ -16,11 +16,43 @@ typedef struct {
 	char keys[32];
 } en_state;
 
+void encrypt(char *epath, const char *path)
+{
+	strcpy(epath, path);
+	if(!strcmp(path,"/") || !strcmp(path,".") || !strcmp(path,".."))
+		return;
+
+	int i, j = 0;
+	for(i = 0 ; i < strlen(path); i++){
+		if( path[i] == '.' || path[i] == '/')
+			epath[j++] = path[i];
+		else
+			epath[j++] = path[i] + 1;
+	}
+}
+
+void decrypt(char *path, char *epath)
+{	
+	strcpy(path, epath);
+	if(!strcmp(path,"/") || !strcmp(path,".") || !strcmp(path,".."))
+		return;
+
+	int i, j = 0;
+	for(i = 0 ; i < strlen(epath); i++){
+		if( epath[i] == '.' || epath[i] == '/')
+			path[j++] = epath[i];
+		else
+			path[j++] = epath[i]-1;
+	}
+}
+
 void fullpath(char fpath[PATH_MAX], const char *path)
 {
 	en_state *state = (en_state *)(fuse_get_context()->private_data);
 	strcpy(fpath, state->rootdir);
-	strncat(fpath, path, PATH_MAX);
+	char epath[200];
+	encrypt(epath, path);
+	strncat(fpath, epath, PATH_MAX);
 }
 
 int en_getattr(const char *path, struct stat *stbuf)
@@ -44,14 +76,22 @@ int en_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t off
 	dp = opendir(fpath);
 	if( dp == NULL )
 		return -errno;
-
+	
+	seekdir(dp, offset);
 	while( (de = readdir(dp)) != NULL ){
 		struct stat st;
+		memset(&st, 0, sizeof(st));
+		char dname[200];
+		strcpy(dname, de->d_name);
+		if(!strcmp(dname,"/") || !strcmp(dname,".") || !strcmp(dname,".."))
+			strcpy(dname, de->d_name);
+		else
+			decrypt(dname, de->d_name);
+		
 		st.st_ino = de->d_ino;
-		if( filler(buffer, de->d_name, &st, 0) )
+		if( filler(buffer, dname, &st, telldir(dp)) )
 			break;
 	}
-	
 	closedir(dp);
 	return 0;
 }
@@ -177,6 +217,5 @@ int main(int argc, char *argv[])
 	argc = argc-2;
 	
 	printf("Rootdir %s\n", en_data->rootdir);
-	
 	return fuse_main(argc, argv, &en_operations, en_data);
 }
