@@ -181,7 +181,7 @@ int en_rename(const char *from , const char *to)
 	fullpath(fpathfrom, from);
 	fullpath(fpathto, to);
 
-	int result = rename(from, to);
+	int result = rename(fpathfrom, fpathto);
 	if( result == -1)
 		return -errno;
 	return 0;
