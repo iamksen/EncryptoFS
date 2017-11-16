@@ -7,17 +7,17 @@
 #include <string.h>
 #include <errno.h>
 #include <stdlib.h>
-
-typedef struct {
-	char *rootdir;
-	char *key;
-} en_state;
-
+#include <unistd.h>
+#include "util.h"
 
 void encrypt(char *epath, const char *path)
 {
 	strcpy(epath, path);
 	if(!strcmp(path,"/") || !strcmp(path,".") || !strcmp(path,".."))
+		return;
+
+	// hidden file
+	if( strlen(path) >= 2 && path[0] == '/' && path[1] == '.' )
 		return;
 
 	int i, j = 0;
@@ -33,6 +33,10 @@ void decrypt(char *path, char *epath)
 {
 	strcpy(path, epath);
 	if(!strcmp(path,"/") || !strcmp(path,".") || !strcmp(path,".."))
+		return;
+
+	// hidden file
+	if( strlen(path) >= 2 && path[0] == '/' && path[1] == '.')
 		return;
 
 	int i, j = 0;
@@ -290,13 +294,12 @@ int main(int argc, char *argv[])
 	if( en_data == NULL )
 		abort();
 
-	en_data->key     = argv[argc-3];
 	en_data->rootdir = realpath(argv[argc-2], NULL);
-	argv[argc-3] = argv[argc-1];
-
+	argv[argc-2] = argv[argc-1];
 	argv[argc-1] = NULL;
-	argv[argc-2] = NULL;
-	argc = argc-2;
-
+	argc = argc-1;
+	
+	check_config_file(en_data);
+	
 	return fuse_main(argc, argv, &en_operations, en_data);
 }
