@@ -7,5 +7,6 @@ typedef struct {
 } en_state;
 
 void check_config_file(en_state *);
+void first_time_encryption(char *, char *);
 
 #endif
