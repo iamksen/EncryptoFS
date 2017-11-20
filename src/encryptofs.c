@@ -1,14 +1,50 @@
 #define FUSE_USE_VERSION 30
 #define PATH_MAX 1024
-
+#define BLOCKSIZE 1024
 #include <fuse.h>
 #include <stdio.h>
 #include <dirent.h>
 #include <string.h>
-#include <errno.h>
-#include <stdlib.h>
 #include <unistd.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <openssl/evp.h>
 #include "util.h"
+
+void do_crypt(FILE *ifp, FILE *ofp, int should_encrypt, unsigned char *ckey) {
+	unsigned char *ivec = "def";
+	const unsigned BUFSIZE = 1;
+	unsigned char *read_buf = malloc(BUFSIZE);
+	unsigned char *cipher_buf;
+	unsigned blocksize;
+	int out_len;
+	EVP_CIPHER_CTX ctx;
+
+	EVP_CipherInit(&ctx, EVP_aes_256_cbc(), ckey, ivec, should_encrypt);
+	blocksize = EVP_CIPHER_CTX_block_size(&ctx);
+	cipher_buf = malloc(BUFSIZE + blocksize);
+
+	int calculate_size = 0;
+	while (1) {
+
+		// Read in data in blocks until EOF. Update the ciphering with each read.
+		int numRead = fread(read_buf, sizeof(unsigned char), BUFSIZE, ifp);
+		EVP_CipherUpdate(&ctx, cipher_buf, &out_len, read_buf, numRead);
+		fwrite(cipher_buf, sizeof(unsigned char), out_len, ofp);
+		if (numRead < BUFSIZE) { // EOF
+			break;
+		}
+	}
+
+	// Now cipher the final block and write it out.
+	EVP_CipherFinal(&ctx, cipher_buf, &out_len);
+	fwrite(cipher_buf, sizeof(unsigned char), out_len, ofp);
+
+	free(cipher_buf);
+	free(read_buf);
+}
+
 
 void encrypt(char *epath, const char *path)
 {
@@ -142,26 +178,33 @@ int en_rmdir(const char *path)
 int en_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi)
 {
 	en_state *en_data = (en_state *)(fuse_get_context()->private_data);
-	
-	FILE *fp, *memstream;
-	char fpath[PATH_MAX];
+	char fpath[PATH_MAX], fpath2[PATH_MAX];
 	fullpath(fpath, path);
-	fp = fopen(fpath, "rb");
-	fseek(fp, 0, SEEK_END);
-	long fsize = ftell(fp);
-	fseek(fp, 0, SEEK_SET);
 
-	char *temp = malloc(fsize + 1);
-	fseek(fp, offset, SEEK_SET);
-	int i, result = fread(temp, 1, size, fp);
+	FILE *f, *fout, *memstream;
+	int res;
+	char *membuf;
+	size_t memsize;
 
-	for(i = 0 ; i < size; i++)
-		buffer[i] = temp[i]^(en_data->key[i%strlen(en_data->key)]);
-	fclose(fp);
+	(void) fi;
+	f = fopen(fpath, "rb");
+	memstream = open_memstream(&membuf, &memsize);
+	if (f == NULL || memstream == NULL)
+		return -errno;
+	fout = fopen("tmp", "wb");
 
-	if( result == -1 )
-		return -errno; 
-	return result; 
+	do_crypt(f, fout, 0, en_data->key);
+
+	fflush(fout);
+	fseek(fout, offset, SEEK_SET);
+	res = fread(buffer, 1, size, fout);
+	fclose(fout);
+
+	if (res == -1)
+		res = -errno;
+
+	fclose(f);
+	return res;
 }
 
 int en_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi)
@@ -171,20 +214,42 @@ int en_write(const char *path, const char *buffer, size_t size, off_t offset, st
 	FILE *fp;
 	char fpath[PATH_MAX];
 	fullpath(fpath, path);
-	
-	fp = fopen(fpath, "wb");
-	fseek(fp, offset, SEEK_SET);
-	int i, len = strlen(buffer);
-	char *temp = malloc(len+1);
-	for(i = 0 ; i < len ; i++)
-		temp[i] = buffer[i]^(en_data->key[i%strlen(en_data->key)]);
 
-	int result = fwrite(temp, 1, len, fp);
-	fclose(fp);
-	free(temp);
-	if( result == -1 )
+	FILE *f, *memstream, *fout;
+	int res;
+	char *membuf;
+	size_t memsize;
+
+	(void) fi;
+	f = fopen(fpath, "rb");
+	fout = fopen("tt", "wb");
+
+	memstream = open_memstream(&membuf, &memsize);
+
+	if (memstream == NULL)
 		return -errno;
-	return result;
+
+	if(f != NULL){
+		do_crypt(f, fout, 0 , en_data->key);
+		fclose(f);
+	}
+
+	fseek(fout, offset, SEEK_SET);
+	res = fwrite(buffer, 1, size, fout);
+	fflush(fout);
+	f = fopen(fpath, "w");
+
+
+	fseek(fout, 0, SEEK_SET);
+	do_crypt(fout, f, 1, en_data->key);
+	fclose(fout);
+
+	if (res == -1)
+		res = -errno;
+
+	fclose(f);
+	return res;
+
 }
 
 int en_unlink(const char *path)
@@ -298,8 +363,8 @@ int main(int argc, char *argv[])
 	argv[argc-2] = argv[argc-1];
 	argv[argc-1] = NULL;
 	argc = argc-1;
-	
+
 	check_config_file(en_data);
-	
+
 	return fuse_main(argc, argv, &en_operations, en_data);
 }
