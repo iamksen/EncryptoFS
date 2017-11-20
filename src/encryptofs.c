@@ -273,16 +273,18 @@ int main(int argc, char *argv[])
 		abort();
 	if( argc != 3 ){
 		//.encryptofs <rootdir> <mountpoint or some option>
-		abort();
+		//abort();
 	}
 
 	en_data->rootdir = realpath(argv[1], NULL);
 	check_authentication(en_data);
 	
 	if( !strcmp(argv[2], "e") ){
-		encrypt_filesystem(en_data->rootdir, NULL, en_data, 1);
+		encrypt_filesystem(en_data->rootdir, NULL, en_data->key, 1);
 	} else if (!strcmp(argv[2], "d")) {
-		encrypt_filesystem(en_data->rootdir, NULL, en_data, 0);
+		encrypt_filesystem(en_data->rootdir, NULL, en_data->key, 0);
+	} else if (!strcmp(argv[2], "c")) {
+		change_password(en_data);
 	} else {
 		argv[1] = argv[2];
 		argv[2] = NULL;

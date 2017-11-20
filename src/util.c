@@ -9,15 +9,21 @@
 
 void calculate_SHA1(char key[], char out[])
 {
-	size_t length = strlen(key);
-	unsigned char hash[32];
-	SHA1(key, length, hash);
-	char array[35];
-	int i;
-	for( i = 0; i < SHA_DIGEST_LENGTH; i++ ){
-		sprintf(array ,"%02x" , hash[i]);
-		strcat(out,array);
+	unsigned char hash[SHA256_DIGEST_LENGTH];
+	SHA256_CTX sha256;
+	SHA256_Init(&sha256);
+	SHA256_Update(&sha256, key, strlen(key));
+	SHA256_Final(hash, &sha256);
+
+	int i,j;
+	char array[3], temp[50];
+	for(i = 0 ; i < SHA_DIGEST_LENGTH; i++){
+		sprintf(array, "%02x", (int)hash[i]);
+		strcat(temp, array);
 	}
+	for(i = strlen(temp)-1,j=0; j < 40; j++,i--)
+		out[40-j-1] = temp[i];
+	out[40] = '\0';
 }
 
 void calculate_fullpath(char *fpath, char *root, char *path)
@@ -28,7 +34,7 @@ void calculate_fullpath(char *fpath, char *root, char *path)
 }
 
 // action 1-encrypt, 0-decrypt
-void encrypt_filesystem(char *root, char *path, en_state *en_data, int action)
+void encrypt_filesystem(char *root, char *path, char *key, int action)
 {
 	char fpath[PATH_MAX];
 	strcpy(fpath, root);
@@ -45,7 +51,7 @@ void encrypt_filesystem(char *root, char *path, en_state *en_data, int action)
 		if( !strcmp(dname, ".") || !strcmp(dname, "..") || !strcmp(dname, "/") || !strcmp(dname, ".config"))
 			continue;
 		if( entry->d_type == DT_DIR)
-			encrypt_filesystem(fpath, dname, en_data, action);
+			encrypt_filesystem(fpath, dname, key, action);
 			char filepath[PATH_MAX];
 			strcpy(filepath, fpath);
 			strcat(filepath, "/");
@@ -57,12 +63,12 @@ void encrypt_filesystem(char *root, char *path, en_state *en_data, int action)
 			
 			fp = fopen(filepath, "rb");
 			memstream = open_memstream(&membuf, &memsize);
-			do_crypt(fp, memstream, action, en_data->key);
+			do_crypt(fp, memstream, action, key);
 			fclose(fp);
 			
 			fp = fopen(filepath, "wb");
 			fseek(memstream, 0, SEEK_SET);
-			do_crypt(memstream, fp, -1, en_data->key);
+			do_crypt(memstream, fp, -1, key);
 			fclose(fp);
 			fclose(memstream);
 		}
@@ -80,6 +86,50 @@ void encrypt_filesystem(char *root, char *path, en_state *en_data, int action)
 	closedir(dp);
 }
 
+void change_password(en_state *en_data)
+{
+	FILE *fp;
+	char oldkey[256], key1[256], key2[256], old_key[40], new_key[40], fpath[PATH_MAX];
+	char is_encrypted[10], key[256];
+	strcpy(fpath, en_data->rootdir);
+	strcat(fpath, "/.config");
+
+	printf("Please enter old password : ");
+	scanf("%s", oldkey);
+	calculate_SHA1(oldkey, old_key);
+	
+	fp = fopen(fpath, "r");
+	fscanf(fp, "%s", key);
+	fscanf(fp, "%s", is_encrypted);
+	fclose(fp);	
+
+	if( strcmp(key, old_key) ){
+		printf("Password not matched!");
+		abort();
+	}
+
+	printf("Please enter new password : ");
+	scanf("%s", key1);
+	printf("Please enter confirm password : ");
+	scanf("%s", key2);
+
+	if( strcmp(key1, key2) ){
+		printf("Password not matched!");
+		abort();
+	}
+	
+	calculate_SHA1(key1, new_key);
+	if( !strcmp(is_encrypted, "1") ){
+		encrypt_filesystem(en_data->rootdir, NULL, old_key, 0);
+		encrypt_filesystem(en_data->rootdir, NULL, new_key, 1);
+		strcpy(en_data->key, new_key);
+	}
+	fp = fopen(fpath, "w");
+	fprintf(fp, "%s", new_key);
+	fprintf(fp, "\n%s", is_encrypted);
+	fclose(fp);
+}
+
 void check_authentication(en_state *en_data)
 {
 	FILE *fp;
@@ -88,7 +138,7 @@ void check_authentication(en_state *en_data)
 	strcpy(fpath, en_data->rootdir);
 	strcat(fpath, "/.config");
 
-	printf("Please enter password : ");
+	printf("Please enter password for authentication: ");
 	scanf("%s", key);
 
 	char output_of_key_sha[40];
@@ -114,11 +164,12 @@ void check_authentication(en_state *en_data)
 		}
 		fp = fopen(fpath, "w");
 		fprintf(fp, "%s", output_of_key2_sha);
+		fprintf(fp, "\n%s", "1");
 		first_time = 1;
 		fclose(fp);
 	}
 	en_data->key = malloc(strlen(output_of_key_sha)+1);
 	strcpy(en_data->key, output_of_key_sha);
 	if( first_time )
-		encrypt_filesystem(en_data->rootdir, NULL, en_data, 1);
+		encrypt_filesystem(en_data->rootdir, NULL, en_data->key, 1);
 }
