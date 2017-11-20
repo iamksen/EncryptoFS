@@ -12,39 +12,75 @@
 #include <openssl/evp.h>
 #include "util.h"
 
-void do_crypt(FILE *ifp, FILE *ofp, int should_encrypt, unsigned char *ckey) {
-	unsigned char *ivec = "def";
-	const unsigned BUFSIZE = 1;
-	unsigned char *read_buf = malloc(BUFSIZE);
-	unsigned char *cipher_buf;
-	unsigned blocksize;
-	int out_len;
+int do_crypt(FILE* in, FILE* out, int action, char* key_str){
+
+	unsigned char inbuf[BLOCKSIZE], outbuf[BLOCKSIZE + EVP_MAX_BLOCK_LENGTH];
+	int inlen, outlen, writelen;
+
 	EVP_CIPHER_CTX ctx;
+	unsigned char key[32], iv[32];
+	int i, nrounds = 5;
 
-	EVP_CipherInit(&ctx, EVP_aes_256_cbc(), ckey, ivec, should_encrypt);
-	blocksize = EVP_CIPHER_CTX_block_size(&ctx);
-	cipher_buf = malloc(BUFSIZE + blocksize);
-
-	int calculate_size = 0;
-	while (1) {
-
-		// Read in data in blocks until EOF. Update the ciphering with each read.
-		int numRead = fread(read_buf, sizeof(unsigned char), BUFSIZE, ifp);
-		EVP_CipherUpdate(&ctx, cipher_buf, &out_len, read_buf, numRead);
-		fwrite(cipher_buf, sizeof(unsigned char), out_len, ofp);
-		if (numRead < BUFSIZE) { // EOF
+	/* Setup Encryption Key and Cipher Engine if in cipher mode */
+	if(action >= 0){
+		if(!key_str){
+			/* Error */
+			fprintf(stderr, "Key_str must not be NULL\n");
+			return 0;
+		}
+		/* Build Key from String */
+		i = EVP_BytesToKey(EVP_aes_256_cbc(), EVP_sha1(), NULL,
+				(unsigned char*)key_str, strlen(key_str), nrounds, key, iv);
+		if (i != 32) {
+			/* Error */
+			fprintf(stderr, "Key size is %d bits - should be 256 bits\n", i*8);
+			return 0;
+		}
+		/* Init Engine */
+		EVP_CIPHER_CTX_init(&ctx);
+		EVP_CipherInit_ex(&ctx, EVP_aes_256_cbc(), NULL, key, iv, action);
+	}    
+	
+	while(1){
+		inlen = fread(inbuf, sizeof(*inbuf), BLOCKSIZE, in);
+		if(inlen <= 0)
 			break;
+
+		if(action >= 0){
+			if(!EVP_CipherUpdate(&ctx, outbuf, &outlen, inbuf, inlen))
+			{
+				/* Error */
+				EVP_CIPHER_CTX_cleanup(&ctx);
+				return 0;
+			}
+		} else {
+			memcpy(outbuf, inbuf, inlen);
+			outlen = inlen;
+		}
+
+		writelen = fwrite(outbuf, sizeof(*outbuf), outlen, out);
+		if(writelen != outlen){
+			/* Error */
+			EVP_CIPHER_CTX_cleanup(&ctx);
+			return 0;
 		}
 	}
 
-	// Now cipher the final block and write it out.
-	EVP_CipherFinal(&ctx, cipher_buf, &out_len);
-	fwrite(cipher_buf, sizeof(unsigned char), out_len, ofp);
-
-	free(cipher_buf);
-	free(read_buf);
+	/* If in cipher mode, handle necessary padding */
+	if(action >= 0){
+		/* Handle remaining cipher block + padding */
+		if(!EVP_CipherFinal_ex(&ctx, outbuf, &outlen))
+		{
+			/* Error */
+			EVP_CIPHER_CTX_cleanup(&ctx);
+			return 0;
+		}
+		/* Write remainign cipher block + padding*/
+		fwrite(outbuf, sizeof(*inbuf), outlen, out);
+		EVP_CIPHER_CTX_cleanup(&ctx);
+	} 
+	return 1;
 }
-
 
 void encrypt(char *epath, const char *path)
 {
@@ -178,10 +214,10 @@ int en_rmdir(const char *path)
 int en_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi)
 {
 	en_state *en_data = (en_state *)(fuse_get_context()->private_data);
-	char fpath[PATH_MAX], fpath2[PATH_MAX];
+	char fpath[PATH_MAX];
 	fullpath(fpath, path);
 
-	FILE *f, *fout, *memstream;
+	FILE *f, *memstream;
 	int res;
 	char *membuf;
 	size_t memsize;
@@ -191,14 +227,12 @@ int en_read(const char *path, char *buffer, size_t size, off_t offset, struct fu
 	memstream = open_memstream(&membuf, &memsize);
 	if (f == NULL || memstream == NULL)
 		return -errno;
-	fout = fopen("tmp", "wb");
 
-	do_crypt(f, fout, 0, en_data->key);
-
-	fflush(fout);
-	fseek(fout, offset, SEEK_SET);
-	res = fread(buffer, 1, size, fout);
-	fclose(fout);
+	do_crypt(f, memstream, 0, en_data->key);
+	fflush(memstream);
+	fseek(memstream, offset, SEEK_SET);
+	res = fread(buffer, 1, size, memstream);
+	fclose(memstream);
 
 	if (res == -1)
 		res = -errno;
@@ -209,47 +243,36 @@ int en_read(const char *path, char *buffer, size_t size, off_t offset, struct fu
 
 int en_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi)
 {
-
 	en_state *en_data = (en_state *)(fuse_get_context()->private_data);
-	FILE *fp;
+	FILE *fp, *memstream;
 	char fpath[PATH_MAX];
-	fullpath(fpath, path);
-
-	FILE *f, *memstream, *fout;
-	int res;
 	char *membuf;
 	size_t memsize;
+	
+	fullpath(fpath, path);
 
-	(void) fi;
-	f = fopen(fpath, "rb");
-	fout = fopen("tt", "wb");
-
+	fp = fopen(fpath, "rb");
 	memstream = open_memstream(&membuf, &memsize);
 
-	if (memstream == NULL)
+	if ( fp == NULL || memstream == NULL)
 		return -errno;
 
-	if(f != NULL){
-		do_crypt(f, fout, 0 , en_data->key);
-		fclose(f);
-	}
+	do_crypt(fp, memstream, 0 , en_data->key);
+	fclose(fp);
+	
+	fseek(memstream, offset, SEEK_SET);
+	int result = fwrite(buffer, 1, size, memstream);
+	fflush(memstream);
+	
+	fp = fopen(fpath, "w");
+	fseek(memstream, 0, SEEK_SET);
+	do_crypt(memstream, fp, 1, en_data->key);
+	fclose(memstream);
+	fclose(fp);
 
-	fseek(fout, offset, SEEK_SET);
-	res = fwrite(buffer, 1, size, fout);
-	fflush(fout);
-	f = fopen(fpath, "w");
-
-
-	fseek(fout, 0, SEEK_SET);
-	do_crypt(fout, f, 1, en_data->key);
-	fclose(fout);
-
-	if (res == -1)
-		res = -errno;
-
-	fclose(f);
-	return res;
-
+	if (result == -1)
+		return -errno;
+	return result;
 }
 
 int en_unlink(const char *path)
