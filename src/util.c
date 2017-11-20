@@ -27,39 +27,60 @@ void calculate_fullpath(char *fpath, char *root, char *path)
 	strcat(fpath, path);
 }
 
-void first_time_encryption(char *root, char *path)
+// action 1-encrypt, 0-decrypt
+void encrypt_filesystem(char *root, char *path, en_state *en_data, int action)
 {
-
 	char fpath[PATH_MAX];
 	strcpy(fpath, root);
-	if(path != NULL){
+	if( path != NULL ){
 		strcat(fpath, "/");
 		strcat(fpath, path);
 	}
-
 	DIR *dp;
-	struct dirent *de;
-
-
+	struct dirent *entry;
 	dp = opendir(fpath);
-	while( (de = readdir(dp)) != NULL ){
-		char dname[200];
-
-		if( !strcmp(de->d_name, ".") || !strcmp(de->d_name, "..") || !strcmp(de->d_name, "/") || !strcmp(de->d_name, ".config"))
+	while( (entry = readdir(dp)) != NULL ){
+		char dname[256], encrypted_name[256];
+		strcpy(dname, entry->d_name);
+		if( !strcmp(dname, ".") || !strcmp(dname, "..") || !strcmp(dname, "/") || !strcmp(dname, ".config"))
 			continue;
-		if( de->d_type == DT_DIR)
-			first_time_encryption(fpath, de->d_name);
+		if( entry->d_type == DT_DIR)
+			encrypt_filesystem(fpath, dname, en_data, action);
+			char filepath[PATH_MAX];
+			strcpy(filepath, fpath);
+			strcat(filepath, "/");
+			strcat(filepath, dname);
+		if( entry->d_type == DT_REG){	
+			char *membuf;
+			size_t memsize;
+			FILE *fp, *memstream;
+			
+			fp = fopen(filepath, "rb");
+			memstream = open_memstream(&membuf, &memsize);
+			do_crypt(fp, memstream, action, en_data->key);
+			fclose(fp);
+			
+			fp = fopen(filepath, "wb");
+			fseek(memstream, 0, SEEK_SET);
+			do_crypt(memstream, fp, -1, en_data->key);
+			fclose(fp);
+			fclose(memstream);
+		}
 
-		encrypt(dname, de->d_name);
+		if( action == 1)
+			encrypt(encrypted_name, dname);
+		else
+			decrypt(encrypted_name, dname);
+
 		char from[PATH_MAX], to[PATH_MAX];
-		calculate_fullpath(from, fpath, de->d_name);
-		calculate_fullpath(to, fpath, dname);
+		calculate_fullpath(from, fpath, dname);
+		calculate_fullpath(to, fpath, encrypted_name);
 		rename(from, to);
 	}
 	closedir(dp);
 }
 
-void check_config_file(en_state *en_data)
+void check_authentication(en_state *en_data)
 {
 	FILE *fp;
 	int first_time = 0;
@@ -99,5 +120,5 @@ void check_config_file(en_state *en_data)
 	en_data->key = malloc(strlen(output_of_key_sha)+1);
 	strcpy(en_data->key, output_of_key_sha);
 	if( first_time )
-		first_time_encryption(en_data->rootdir, NULL);
+		encrypt_filesystem(en_data->rootdir, NULL, en_data, 1);
 }

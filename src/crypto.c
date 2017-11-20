@@ -37,8 +37,7 @@ int do_crypt(FILE* in, FILE* out, int action, char* key_str){
 			break;
 
 		if(action >= 0){
-			if(!EVP_CipherUpdate(&ctx, outbuf, &outlen, inbuf, inlen))
-			{
+			if(!EVP_CipherUpdate(&ctx, outbuf, &outlen, inbuf, inlen)){
 				/* Error */
 				EVP_CIPHER_CTX_cleanup(&ctx);
 				return 0;

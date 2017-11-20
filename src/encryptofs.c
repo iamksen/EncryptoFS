@@ -110,11 +110,9 @@ int en_read(const char *path, char *buffer, size_t size, off_t offset, struct fu
 	fullpath(fpath, path);
 
 	FILE *f, *memstream;
-	int res;
 	char *membuf;
 	size_t memsize;
 
-	(void) fi;
 	f = fopen(fpath, "rb");
 	memstream = open_memstream(&membuf, &memsize);
 	if (f == NULL || memstream == NULL)
@@ -123,14 +121,14 @@ int en_read(const char *path, char *buffer, size_t size, off_t offset, struct fu
 	do_crypt(f, memstream, 0, en_data->key);
 	fflush(memstream);
 	fseek(memstream, offset, SEEK_SET);
-	res = fread(buffer, 1, size, memstream);
+	int result = fread(buffer, 1, size, memstream);
 	fclose(memstream);
 
-	if (res == -1)
-		res = -errno;
+	if (result == -1)
+		result = -errno;
 
 	fclose(f);
-	return res;
+	return result;
 }
 
 int en_write(const char *path, const char *buffer, size_t size, off_t offset, struct fuse_file_info *fi)
@@ -140,7 +138,7 @@ int en_write(const char *path, const char *buffer, size_t size, off_t offset, st
 	char fpath[PATH_MAX];
 	char *membuf;
 	size_t memsize;
-	
+
 	fullpath(fpath, path);
 
 	fp = fopen(fpath, "rb");
@@ -151,11 +149,11 @@ int en_write(const char *path, const char *buffer, size_t size, off_t offset, st
 
 	do_crypt(fp, memstream, 0 , en_data->key);
 	fclose(fp);
-	
+
 	fseek(memstream, offset, SEEK_SET);
 	int result = fwrite(buffer, 1, size, memstream);
 	fflush(memstream);
-	
+
 	fp = fopen(fpath, "w");
 	fseek(memstream, 0, SEEK_SET);
 	do_crypt(memstream, fp, 1, en_data->key);
@@ -273,13 +271,23 @@ int main(int argc, char *argv[])
 	en_data = (en_state *)malloc(sizeof(en_state));
 	if( en_data == NULL )
 		abort();
+	if( argc != 3 ){
+		//.encryptofs <rootdir> <mountpoint or some option>
+		abort();
+	}
 
-	en_data->rootdir = realpath(argv[argc-2], NULL);
-	argv[argc-2] = argv[argc-1];
-	argv[argc-1] = NULL;
-	argc = argc-1;
-
-	check_config_file(en_data);
-
-	return fuse_main(argc, argv, &en_operations, en_data);
+	en_data->rootdir = realpath(argv[1], NULL);
+	check_authentication(en_data);
+	
+	if( !strcmp(argv[2], "e") ){
+		encrypt_filesystem(en_data->rootdir, NULL, en_data, 1);
+	} else if (!strcmp(argv[2], "d")) {
+		encrypt_filesystem(en_data->rootdir, NULL, en_data, 0);
+	} else {
+		argv[1] = argv[2];
+		argv[2] = NULL;
+		argc = 2;
+		return fuse_main(argc, argv, &en_operations, en_data);
+	}
+	return 0;
 }

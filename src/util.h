@@ -6,7 +6,8 @@ typedef struct {
 	char *key;
 } en_state;
 
-void check_config_file(en_state *);
+void check_authentication(en_state *);
 void first_time_encryption(char *, char *);
+void encrypt_filesystem(char *root, char *path, en_state *, int);
 
 #endif
