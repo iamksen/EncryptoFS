@@ -7,7 +7,7 @@
 #include "crypto.h"
 #include "util.h"
 
-void calculate_SHA1(char key[], char out[])
+void calculate_SHA1(char key[], char out[]) 
 {
 	unsigned char hash[SHA256_DIGEST_LENGTH];
 	SHA256_CTX sha256;
@@ -26,15 +26,27 @@ void calculate_SHA1(char key[], char out[])
 	out[40] = '\0';
 }
 
-void calculate_fullpath(char *fpath, char *root, char *path)
+void calculate_fullpath(char *fpath, char *root, char *path) 
 {
 	strcpy(fpath, root);
 	strcat(fpath, "/");
 	strcat(fpath, path);
 }
 
+void helper() 
+{
+	char buff[100];
+	FILE* fp = fopen("helper.txt","r");
+
+	while(fgets(buff, sizeof(buff), fp) != 0){
+		printf("%s",buff);
+	}
+	fclose(fp);
+}
+
+
 // action 1-encrypt, 0-decrypt
-void encrypt_filesystem(char *root, char *path, char *key, int action)
+void encrypt_filesystem(char *root, char *path, char *key, int action) 
 {
 	char fpath[PATH_MAX];
 	strcpy(fpath, root);
@@ -52,20 +64,20 @@ void encrypt_filesystem(char *root, char *path, char *key, int action)
 			continue;
 		if( entry->d_type == DT_DIR)
 			encrypt_filesystem(fpath, dname, key, action);
-			char filepath[PATH_MAX];
-			strcpy(filepath, fpath);
-			strcat(filepath, "/");
-			strcat(filepath, dname);
+		char filepath[PATH_MAX];
+		strcpy(filepath, fpath);
+		strcat(filepath, "/");
+		strcat(filepath, dname);
 		if( entry->d_type == DT_REG){	
 			char *membuf;
 			size_t memsize;
 			FILE *fp, *memstream;
-			
+
 			fp = fopen(filepath, "rb");
 			memstream = open_memstream(&membuf, &memsize);
 			do_crypt(fp, memstream, action, key);
 			fclose(fp);
-			
+
 			fp = fopen(filepath, "wb");
 			fseek(memstream, 0, SEEK_SET);
 			do_crypt(memstream, fp, -1, key);
@@ -86,7 +98,7 @@ void encrypt_filesystem(char *root, char *path, char *key, int action)
 	closedir(dp);
 }
 
-void change_password(en_state *en_data)
+void change_password(en_state *en_data) 
 {
 	FILE *fp;
 	char oldkey[256], key1[256], key2[256], old_key[40], new_key[40], fpath[PATH_MAX];
@@ -97,7 +109,7 @@ void change_password(en_state *en_data)
 	printf("Please enter old password : ");
 	scanf("%s", oldkey);
 	calculate_SHA1(oldkey, old_key);
-	
+
 	fp = fopen(fpath, "r");
 	fscanf(fp, "%s", key);
 	fscanf(fp, "%s", is_encrypted);
@@ -117,7 +129,7 @@ void change_password(en_state *en_data)
 		printf("Password not matched!");
 		abort();
 	}
-	
+
 	calculate_SHA1(key1, new_key);
 	if( !strcmp(is_encrypted, "1") ){
 		encrypt_filesystem(en_data->rootdir, NULL, old_key, 0);
@@ -130,7 +142,7 @@ void change_password(en_state *en_data)
 	fclose(fp);
 }
 
-void check_authentication(en_state *en_data)
+void check_authentication(en_state *en_data) 
 {
 	FILE *fp;
 	int first_time = 0;

@@ -1,0 +1,11 @@
+******************************** WELCOME TO encryptoFS ********************************
+
+				./encryptofs   <rootdirectory_path>   [*]
+
+	1. "c" for change password options, only to be used when the file system is already in encrypted state.
+
+	2. "e" for encrypting the file system at the mount point.
+	
+	3. "d" for decrypting the filesystem at the mount point.
+
+	4. "h" to prompt this helper menu.

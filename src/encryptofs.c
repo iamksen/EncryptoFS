@@ -246,6 +246,15 @@ int en_release(const char *path, struct fuse_file_info *fi)
 	return 0;
 }
 
+int en_chown(const char *path, uid_t uid, gid_t gid)
+
+{
+	char fpath[PATH_MAX];
+	fullpath(fpath, path);
+	int x=chown(fpath, uid, gid);
+	if(x==-1)return -errno;
+	return 0;
+}
 struct fuse_operations en_operations = {
 	.getattr  = en_getattr,
 	.readdir  = en_readdir,
@@ -262,6 +271,7 @@ struct fuse_operations en_operations = {
 	.truncate = en_truncate,
 	.release  = en_release,
 	.fsync    = en_fsync,
+	.chown    = en_chown,
 };
 
 
@@ -272,13 +282,18 @@ int main(int argc, char *argv[])
 	if( en_data == NULL )
 		abort();
 	if( argc != 3 ){
-		//.encryptofs <rootdir> <mountpoint or some option>
-		//abort();
+		helper();
+		abort();
+	}
+
+	if(!strcmp(argv[2], "h")) {
+		helper();
+		abort();
 	}
 
 	en_data->rootdir = realpath(argv[1], NULL);
 	check_authentication(en_data);
-	
+
 	if( !strcmp(argv[2], "e") ){
 		encrypt_filesystem(en_data->rootdir, NULL, en_data->key, 1);
 	} else if (!strcmp(argv[2], "d")) {
