@@ -106,10 +106,12 @@ int en_rmdir(const char *path)
 int en_read(const char *path, char *buffer, size_t size, off_t offset, struct fuse_file_info *fi)
 {
 	en_state *en_data = (en_state *)(fuse_get_context()->private_data);
-	char fpath[PATH_MAX];
+	char fpath[PATH_MAX], configpath[PATH_MAX], sha1key[256], flipbit[3];
 	fullpath(fpath, path);
+	strcpy(configpath, en_data->rootdir);
+	strcat(configpath, "/.config");
 
-	FILE *f, *memstream;
+	FILE *f, *memstream, *fconfig;
 	char *membuf;
 	size_t memsize;
 
@@ -117,8 +119,16 @@ int en_read(const char *path, char *buffer, size_t size, off_t offset, struct fu
 	memstream = open_memstream(&membuf, &memsize);
 	if (f == NULL || memstream == NULL)
 		return -errno;
+	
+	fconfig = fopen(configpath, "r");
+	fscanf(fconfig, "%s", sha1key);
+	fscanf(fconfig, "%s", flipbit);
 
-	do_crypt(f, memstream, 0, en_data->key);
+	if( !strcmp(flipbit, "0") ) // if rootdir is already decrypted
+		do_crypt(f, memstream, -1, en_data->key);
+	else	
+		do_crypt(f, memstream, 0, en_data->key);
+	
 	fflush(memstream);
 	fseek(memstream, offset, SEEK_SET);
 	int result = fread(buffer, 1, size, memstream);
@@ -247,14 +257,15 @@ int en_release(const char *path, struct fuse_file_info *fi)
 }
 
 int en_chown(const char *path, uid_t uid, gid_t gid)
-
 {
 	char fpath[PATH_MAX];
 	fullpath(fpath, path);
-	int x=chown(fpath, uid, gid);
-	if(x==-1)return -errno;
+	int result = chown(fpath, uid, gid);
+	if( result == -1 )
+		return -errno;
 	return 0;
 }
+
 struct fuse_operations en_operations = {
 	.getattr  = en_getattr,
 	.readdir  = en_readdir,
@@ -282,7 +293,7 @@ int main(int argc, char *argv[])
 	if( en_data == NULL )
 		abort();
 	if( argc != 3 ){
-		helper();
+		//.encryptofs <rootdir> <mountpoint or some option>
 		abort();
 	}
 
@@ -293,10 +304,35 @@ int main(int argc, char *argv[])
 
 	en_data->rootdir = realpath(argv[1], NULL);
 	check_authentication(en_data);
-
-	if( !strcmp(argv[2], "e") ){
+	
+	FILE *configfile;
+	char configpath[PATH_MAX], sha1key[256], flipbit[3];
+	strcpy(configpath, en_data->rootdir);
+	strcat(configpath, "/.config");
+	configfile = fopen(configpath, "r");
+	fscanf(configfile, "%s", sha1key);
+	fscanf(configfile, "%s", flipbit);
+	fclose(configfile);
+	
+	if( !strcmp(argv[2], "e") ){	
+		if( !strcmp(flipbit, "1") ){
+			printf("You are trying to encrypt an already encrypted file system!");
+			abort();
+		}
+		configfile = fopen(configpath, "w");
+		fprintf(configfile, "%s", sha1key);
+		fprintf(configfile, "\n%s", "1");
+		fclose(configfile);
 		encrypt_filesystem(en_data->rootdir, NULL, en_data->key, 1);
 	} else if (!strcmp(argv[2], "d")) {
+		if( !strcmp(flipbit, "0") ){
+			printf("You are trying to decrypt an already decrypted file system!");
+			abort();
+		}
+		configfile = fopen(configpath, "w");
+		fprintf(configfile, "%s", sha1key);
+		fprintf(configfile, "\n%s", "0");
+		fclose(configfile);
 		encrypt_filesystem(en_data->rootdir, NULL, en_data->key, 0);
 	} else if (!strcmp(argv[2], "c")) {
 		change_password(en_data);
